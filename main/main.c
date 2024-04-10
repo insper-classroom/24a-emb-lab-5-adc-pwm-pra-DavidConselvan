@@ -1,6 +1,3 @@
-/*
- * LED blink with FreeRTOS
- */
 #include <FreeRTOS.h>
 #include <task.h>
 #include <semphr.h>
@@ -13,17 +10,84 @@
 #include <math.h>
 #include <stdlib.h>
 
-const uint ADC_PIN_X = 27; // GPIO 26, que é o canal ADC 0
-const uint ADC_PIN_Y = 26; // GPIO 27, que é o canal ADC 1
+uint const XPIN = 26;
+uint const YPIN = 27;
 
 QueueHandle_t xQueueAdc;
 
-typedef struct {
+typedef struct adc {
     int axis;
     int val;
-} adc_reading_t;
+} adc_t;
 
-void write_package(adc_reading_t data) {
+#define MOVING_AVERAGE_SIZE 5
+
+
+
+void x_task(void *p) {
+    adc_t x_read;
+    int sum = 0;
+    x_read.axis = 0; // define o canal 0 pro eixo x
+    int x_buffer[MOVING_AVERAGE_SIZE] = {0};
+    int x_index = 0;
+
+    while (1) {
+        adc_select_input(0);  // Seleciona o canal ADC para o eixo X (GP26 = ADC0)
+        int current_read = adc_read(); // Realiza a leitura do ADC
+        if ((current_read - 2047) / 8 > -170 && (current_read - 2047) / 8 < 170) { //zona morta
+            x_buffer[x_index] = 0;
+        } else {
+            x_buffer[x_index] = (current_read - 2047) / 128;  // Normaliza o valor lido
+        }
+
+        // Atualiza a soma para calcular a média móvel
+        sum = 0;
+        for (int i = 0; i < MOVING_AVERAGE_SIZE; i++) {
+            sum += x_buffer[i];
+        }
+        x_read.val = sum / MOVING_AVERAGE_SIZE;
+
+        xQueueSend(xQueueAdc, &x_read, portMAX_DELAY);  // Envia a leitura para a fila
+        x_index = (x_index + 1) % MOVING_AVERAGE_SIZE;  // Atualiza o índice circularmente
+
+        vTaskDelay(pdMS_TO_TICKS(100));  // Atraso para desacoplamento das tarefas
+    }
+}
+
+void y_task(void *p) {
+    adc_t y_read;
+    int sum = 0;
+    y_read.axis = 1; // define o canal 1 pro eixo y
+
+    
+    int y_buffer[MOVING_AVERAGE_SIZE] = {0};
+    
+    int y_index = 0;
+
+    while (1) {
+        adc_select_input(1);  // Seleciona o canal ADC para o eixo Y (GP27 = ADC1)
+        int current_read = adc_read(); // Realiza a leitura do ADC
+        if ((current_read - 2047) / 8 > -170 && (current_read - 2047) / 8 < 170) { //zona morta
+            y_buffer[y_index] = 0;
+        } else {
+            y_buffer[y_index] = (current_read - 2047) / 128;  // Normaliza o valor lido
+        }
+
+        // Atualiza a soma para calcular a média móvel
+        sum = 0;
+        for (int i = 0; i < MOVING_AVERAGE_SIZE; i++) {
+            sum += y_buffer[i];
+        }
+        y_read.val = sum / MOVING_AVERAGE_SIZE;
+
+        xQueueSend(xQueueAdc, &y_read, portMAX_DELAY);  // Envia a leitura para a fila
+        y_index = (y_index + 1) % MOVING_AVERAGE_SIZE;  // Atualiza o índice circularmente
+
+        vTaskDelay(pdMS_TO_TICKS(100));  // Atraso para desacoplamento das tarefas
+    }
+}
+
+void write(adc_t data){
     int val = data.val;
     int msb = val >> 8;
     int lsb = val & 0xFF ;
@@ -31,68 +95,33 @@ void write_package(adc_reading_t data) {
     uart_putc_raw(uart0, data.axis);
     uart_putc_raw(uart0, lsb);
     uart_putc_raw(uart0, msb);
-    uart_putc_raw(uart0, -1);
+    uart_putc_raw(uart0, -1); 
 }
 
-void x_task(void *params) {
-    adc_reading_t x_reading = {.axis = 0};
-    
-    while (1) {
-        adc_select_input(0);  // Seleciona o canal ADC para o eixo X (GP26 = ADC0)
-        if ((adc_read() - 2047) / 8 > -170 && (adc_read() - 2047) / 8 < 170) {
-            x_reading.val = 0;
-        } else {
-            x_reading.val = (adc_read() - 2047) / 64;  // Lê o valor ADC do eixo X
-        }
-        xQueueSend(xQueueAdc, &x_reading, portMAX_DELAY);  // Envia a leitura para a fila
-        vTaskDelay(pdMS_TO_TICKS(100));  // Atraso para desacoplamento das tarefas
-    }
-}
+void uart_task(void *p) {
+    adc_t data;
 
-void y_task(void *params) {
-    adc_reading_t y_reading = {.axis = 1};
-    
     while (1) {
-        adc_select_input(1);  // Seleciona o canal ADC para o eixo Y (GP27 = ADC1)
-        if ((adc_read() - 2047) / 8 > -170 && (adc_read() - 2047) / 8 < 170) {
-            y_reading.val = 0;
-        } else {
-            y_reading.val = (adc_read() - 2047) / 64;  // Lê o valor ADC do eixo X
-        }
-        xQueueSend(xQueueAdc, &y_reading, portMAX_DELAY);  // Envia a leitura para a fila
-        vTaskDelay(pdMS_TO_TICKS(100));  // Atraso para desacoplamento das tarefas
-    }
-}
-
-void uart_task(void *params) {
-    adc_reading_t reading;
-    
-    while (1) {
-        if (xQueueReceive(xQueueAdc, &reading, portMAX_DELAY)) {
-            write_package(reading);
+        if (xQueueReceive(xQueueAdc, &data, portMAX_DELAY)) {
+            write(data);
         }
     }
 }
-
-
 
 int main() {
-    stdio_init_all();  // Inicializa todas as interfaces padrão de E/S
-    adc_init();        // Inicializa o ADC
+    stdio_init_all();
+    adc_init();
 
-    // Seleciona os pinos de GPIO para o ADC
-    adc_gpio_init(ADC_PIN_X);
-    adc_gpio_init(ADC_PIN_Y);
+    adc_gpio_init(XPIN);
+    adc_gpio_init(YPIN);
 
-    xQueueAdc = xQueueCreate(10, sizeof(adc_reading_t));  // Cria a fila com espaço para 10 leituras
+    xQueueAdc = xQueueCreate(32, sizeof(adc_t));
 
-    // Cria as tarefas
-    xTaskCreate(x_task, "x_task", 256, NULL, 1, NULL);
-    xTaskCreate(y_task, "y_task", 256, NULL, 1, NULL);
-    xTaskCreate(uart_task, "uart_task", 256, NULL, 1, NULL);
+    xTaskCreate(uart_task, "uart_task", 4096, NULL, 1, NULL);
+    xTaskCreate(x_task, "x_task", 4096, NULL, 1, NULL);
+    xTaskCreate(y_task, "y_task", 4096, NULL, 1, NULL);
 
-    vTaskStartScheduler();  // Inicia o escalonador de tarefas
+    vTaskStartScheduler();
 
-    while (true);  // O loop principal não deve ser alcançado
-    return 0;
+    while (true);
 }
