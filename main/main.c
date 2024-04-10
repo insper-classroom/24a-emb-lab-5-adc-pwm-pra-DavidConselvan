@@ -26,7 +26,7 @@ typedef struct adc {
 
 void x_task(void *p) {
     adc_t x_read;
-    int sum = 0;
+    
     x_read.axis = 0; // define o canal 0 pro eixo x
     int x_buffer[MOVING_AVERAGE_SIZE] = {0};
     int x_index = 0;
@@ -41,7 +41,7 @@ void x_task(void *p) {
         }
 
         // Atualiza a soma para calcular a média móvel
-        sum = 0;
+        int sum = 0;
         for (int i = 0; i < MOVING_AVERAGE_SIZE; i++) {
             sum += x_buffer[i];
         }
@@ -56,7 +56,7 @@ void x_task(void *p) {
 
 void y_task(void *p) {
     adc_t y_read;
-    int sum = 0;
+    
     y_read.axis = 1; // define o canal 1 pro eixo y
 
     
@@ -74,7 +74,7 @@ void y_task(void *p) {
         }
 
         // Atualiza a soma para calcular a média móvel
-        sum = 0;
+        int sum = 0;
         for (int i = 0; i < MOVING_AVERAGE_SIZE; i++) {
             sum += y_buffer[i];
         }
